@@ -1,0 +1,24 @@
+/* Colour and shape tokens. Everything else references these, so a theme is
+   one block of variables. */
+:root, .theme-light{
+  --bg:#FDF9FB; --surface:#FFFFFF; --raised:#FAF3F7; --soft:#F5E9F0; --softer:#FBF3F7;
+  --primary:#AF5378; --on-primary:#FFFFFF; --press:#96425F; --accent:#E79FC0;
+  --text:#3E2A35; --text-2:#8C7280; --border:#F1E4EB; --line:#F6EDF2;
+  --done:#8ECFA3; --done-ink:#2C6B45; --warn:#C4645C; --ok-ink:#3F7D58;
+  --co:#B79BE8; --ce:#8CB9E6; --ee:#F3A489; --eo:#EFC877;
+  --scrim:rgba(62,42,53,.32);
+  --shadow:0 2px 10px rgba(175,83,120,.06); --lift:0 8px 28px rgba(175,83,120,.14);
+  --r:16px;
+}
+/* GitHub's dark palette: neutral greys, blue for anything you press, and the
+   contribution-graph green for progress. Cards get a 1px border instead of a
+   drop shadow, which is how GitHub separates surfaces. */
+.theme-dark{
+  --bg:#0D1117; --surface:#161B22; --raised:#1C2128; --soft:#21262D; --softer:#262C36;
+  --primary:#388BFD; --on-primary:#0D1117; --press:#58A6FF; --accent:#39D353;
+  --text:#E6EDF3; --text-2:#8B949E; --border:#30363D; --line:#21262D;
+  --done:#238636; --done-ink:#FFFFFF; --warn:#F85149; --ok-ink:#3FB950;
+  --co:#A371F7; --ce:#58A6FF; --ee:#F0883E; --eo:#D29922;
+  --scrim:rgba(1,4,9,.7);
+  --shadow:0 0 0 1px #30363D; --lift:0 0 0 1px #3D444D, 0 8px 24px rgba(1,4,9,.55);
+}
