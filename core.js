@@ -116,6 +116,54 @@ function levelsFrom(st) {
   return out;
 }
 
+/* ---------- drift: what the days you skipped cost you ---------- */
+
+const studiedOn = (d) => !!d && d.tasks.some((t) => t.status === "done" || (t.actual || 0) > 0);
+
+/* ctx carries the totals derive() already worked out, so nothing is counted twice */
+function projection(st, ctx) {
+  const { todayIndex, planLength, daysLeft, banked, pace } = ctx;
+  const elapsed = Math.max(0, Math.min(todayIndex - 1, planLength));
+  let studied = 0;
+  for (let i = 0; i < elapsed; i++) {
+    if (studiedOn(st.days[addDays(st.config.startDate, i)])) studied++;
+  }
+
+  const skills = Object.keys(BANKS).map((sk) => {
+    const B = BANKS[sk];
+    const target = st.config.targets[sk];
+    const credited = Object.values(st.baseline[sk]).reduce((n, v) => n + v, 0);
+    const done = B.parts.reduce((n, [k]) => n + (banked[sk][k] || 0), 0);
+    const remaining = Math.max(0, target - done);
+    const logged = Math.max(0, done - credited);
+    const asked = Math.max(0, target - credited) / planLength;  /* the pace day one asked for */
+    const perDay = pace[sk] || 0;
+    return {
+      skill: sk, label: B.label, abbr: B.abbr, unit: B.unit, color: B.color,
+      remaining, perDay, asked,
+      needed: daysLeft > 0 ? remaining / daysLeft : remaining,
+      behindBy: Math.max(0, Math.round(asked * elapsed - logged)),
+      shortfall: Math.max(0, Math.round(remaining - perDay * daysLeft)),
+      /* the same bank spread over fewer days, if you sit out n more */
+      ifMissed: (n) => (daysLeft - n >= 1 ? remaining / (daysLeft - n) : null),
+    };
+  });
+
+  const live = skills.filter((s) => s.remaining > 0);
+  const atRisk = live.filter((s) => s.shortfall > 0);
+  return {
+    elapsed, studied, missed: elapsed - studied, skills, live, atRisk,
+    behind: skills.filter((s) => s.behindBy > 0),
+    verdict: !live.length ? "clear"
+      : !atRisk.length ? "ok"
+      : atRisk.length === live.length ? "off" : "slipping",
+  };
+}
+
+/* tasks a template must never overwrite: hand-made ones, and anything
+   moved forward from an earlier day */
+const isKeeper = (t) => !t.fromTemplate || t.rolledFrom > 0;
+
 /* re-apply a template to today and every future day already using it,
    carrying over anything already logged */
 function rebuildDays(st, kind) {
@@ -124,9 +172,9 @@ function rebuildDays(st, kind) {
   const days = { ...st.days };
   Object.entries(days).forEach(([date, d]) => {
     if (date < today || d.template !== kind) return;
-    const manual = d.tasks.filter((t) => !t.fromTemplate);
+    const manual = d.tasks.filter(isKeeper);
     const fresh = buildTemplate(kind, st.config, levels).map((nt) => {
-      const prior = d.tasks.find((p) => p.tid && p.tid === nt.tid);
+      const prior = d.tasks.find((p) => p.tid && p.tid === nt.tid && !isKeeper(p));
       if (!prior) return nt;
       const actual = Math.min(prior.actual || 0, nt.target);
       return {

@@ -1,5 +1,5 @@
 /* bump CACHE whenever you change any file below */
-const CACHE = "tcf-v1";
+const CACHE = "tcf-v2";
 const ASSETS = [
   "./", "./index.html", "./styles.css", "./core.js", "./app.js",
   "./manifest.webmanifest",

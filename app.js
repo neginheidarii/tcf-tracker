@@ -11,6 +11,7 @@ const ui = {
   cursor: iso(new Date()),
   openBanks: new Set(),
   replaceWith: null,
+  confirmClear: false,
   confirmWipe: false,
   saving: false,
 };
@@ -40,6 +41,14 @@ function tickDate() {
   if (now === ui.today) return;
   if (ui.cursor === ui.today) ui.cursor = now;
   ui.today = now;
+  render();
+}
+
+/* moving off a day drops any half-answered question about that day */
+function goTo(date) {
+  ui.cursor = date;
+  ui.replaceWith = null;
+  ui.confirmClear = false;
   render();
 }
 
@@ -107,12 +116,13 @@ function derive() {
   if (!counts(S.days[d])) d = addDays(d, -1);
   while (counts(S.days[d])) { streak++; d = addDays(d, -1); }
 
+  const daysLeft = Math.max(0, toExam);
+
   return {
-    cfg, dayIndex, todayIndex, toExam, planLength, day, tasks, banked, pace, streak,
-    daysLeft: Math.max(0, toExam),
+    cfg, dayIndex, todayIndex, toExam, planLength, day, tasks, banked, pace, streak, daysLeft,
     inRange: dayIndex >= 1 && dayIndex <= planLength,
     badRange: daysBetween(cfg.startDate, cfg.examDate) < 0,
-    levels: levelsFrom(S),
+    outlook: projection(S, { todayIndex, planLength, daysLeft, banked, pace }),
   };
 }
 
@@ -128,7 +138,7 @@ function applyTemplate(kind) {
   const fresh = buildTemplate(kind, S.config, levelsFrom(S));
   commit(() => {
     const d = ensureDay(ui.cursor);
-    S.days[ui.cursor] = { template: kind, tasks: [...fresh, ...d.tasks.filter((t) => !t.fromTemplate)] };
+    S.days[ui.cursor] = { template: kind, tasks: [...fresh, ...d.tasks.filter(isKeeper)] };
     ui.replaceWith = null;
   });
   flash(DEFAULT_TEMPLATES[kind].label + " day inserted.");
@@ -162,7 +172,7 @@ function restoreFrom(text) {
 
 function render() {
   const d = derive();
-  root.className = "app theme-" + (S.config.theme || "light");
+  root.className = "app theme-" + resolvedTheme();
   root.replaceChildren(
     header(d),
     d.inRange || ui.tab !== "today" ? tabContent(d) : outOfRange(d),
@@ -181,7 +191,7 @@ function header(d) {
       all ? "full" : some ? "part" : n < d.todayIndex ? "miss" : ""].filter(Boolean).join(" ");
     cells.push(el("button", {
       class: cls, "aria-label": "Day " + n, title: "Day " + n,
-      onclick: () => { ui.cursor = date; render(); },
+      onclick: () => goTo(date),
     }));
   }
 
@@ -200,7 +210,6 @@ function header(d) {
             : d.toExam === 1 ? "day to the exam" : "days to the exam"))),
     el("div", { class: "strip", style: { "--cols": Math.min(d.planLength, 25), "--colsM": Math.min(d.planLength, 15) } }, cells),
     el("div", { class: "stripKey" },
-      el("span", null, `Drawing from ${d.levels.CO} listening, ${d.levels.CE} reading`),
       el("span", { class: ui.saving ? "sync on" : "sync" }, ui.saving ? "Saving" : "Saved"))
   );
 }
@@ -216,7 +225,7 @@ function outOfRange(d) {
           if (d.dayIndex < 1) S.config.startDate = ui.cursor; else S.config.examDate = ui.cursor;
         }),
       }, d.dayIndex < 1 ? "Start the plan on this date" : "Move the exam to this date"),
-      el("button", { class: "btn subtle", onclick: () => { ui.cursor = ui.today; render(); } }, "Back to today"))));
+      el("button", { class: "btn subtle", onclick: () => goTo(ui.today) }, "Back to today"))));
 }
 
 function tabContent(d) {
@@ -231,13 +240,23 @@ function todayTab(d) {
   const kids = [];
 
   kids.push(el("div", { class: "dayNav" },
-    el("button", { class: "ghost", onclick: () => { ui.cursor = addDays(ui.cursor, -1); render(); } }, "Previous"),
-    el("button", { class: "ghost", onclick: () => { ui.cursor = ui.today; render(); } }, "Today"),
-    el("button", { class: "ghost", onclick: () => { ui.cursor = addDays(ui.cursor, 1); render(); } }, "Next")));
+    el("button", { class: "ghost", onclick: () => goTo(addDays(ui.cursor, -1)) }, "Previous"),
+    el("button", { class: "ghost", onclick: () => goTo(ui.today) }, "Today"),
+    el("button", { class: "ghost", onclick: () => goTo(addDays(ui.cursor, 1)) }, "Next")));
+
+  const p = d.outlook;
+  if (ui.cursor === ui.today && p.missed > 0 && p.behind.length) {
+    kids.push(el("button", { class: "driftBanner", onclick: () => { ui.tab = "banks"; render(); } },
+      el("span", { class: "driftBannerNum" }, String(p.missed)),
+      el("span", { class: "driftBannerText" },
+        el("b", null, `${p.missed === 1 ? "day" : "days"} missed so far`),
+        `${makeUpPhrase(p)} to make up across the ${d.daysLeft} ${d.daysLeft === 1 ? "day" : "days"} left`),
+      el("span", { class: "driftBannerGo" }, "→")));
+  }
 
   if (ui.replaceWith) {
     kids.push(el("div", { class: "confirm" },
-      el("p", null, `Replace today's plan with the ${DEFAULT_TEMPLATES[ui.replaceWith].label} template? Anything you added by hand stays.`),
+      el("p", null, `Replace today's plan with the ${DEFAULT_TEMPLATES[ui.replaceWith].label} template? Anything you added by hand, or moved here from an earlier day, stays.`),
       el("div", { class: "confirmRow" },
         el("button", { class: "btn", onclick: () => applyTemplate(ui.replaceWith) }, "Yes, replace it"),
         el("button", { class: "btn subtle", onclick: () => { ui.replaceWith = null; render(); } }, "Cancel"))));
@@ -248,7 +267,7 @@ function todayTab(d) {
     return el("button", {
       class: "tplBtn" + (d.day && d.day.template === k ? " on" : ""),
       onclick: () => {
-        if (d.tasks.some((t) => t.fromTemplate)) { ui.replaceWith = k; render(); }
+        if (d.tasks.some((t) => !isKeeper(t))) { ui.replaceWith = k; render(); }
         else applyTemplate(k);
       },
     },
@@ -299,13 +318,34 @@ function todayTab(d) {
       g.items.map((t) => taskRow(t, d))));
   });
 
-  kids.push(el("div", { class: "dayActions" },
+  const actions = [
     el("button", { class: "btn", onclick: () => openTaskEditor(newTask(), d) }, "Add a task"),
     el("button", { class: "btn subtle", onclick: () => rollForward(d) }, "Move what's left to tomorrow"),
-    el("button", {
+  ];
+
+  if (ui.confirmClear) {
+    const logged = d.tasks.filter((t) => t.status === "done" || t.actual > 0).length;
+    actions.push(el("div", { class: "confirm" },
+      el("p", null, `Clear all ${d.tasks.length} tasks on ${prettyDate(ui.cursor)}? `
+        + (logged
+          ? `${logged} of them ${logged === 1 ? "has" : "have"} work logged against a bank, and that comes off too.`
+          : "Nothing has been logged against a bank yet, so no progress is lost.")),
+      el("div", { class: "confirmRow" },
+        el("button", {
+          class: "btn danger solid",
+          onclick: () => {
+            commit(() => { S.days[ui.cursor] = { template: null, tasks: [] }; ui.confirmClear = false; });
+            flash("Day cleared.");
+          },
+        }, "Yes, clear the day"),
+        el("button", { class: "btn subtle", onclick: () => { ui.confirmClear = false; render(); } }, "Keep it"))));
+  } else {
+    actions.push(el("button", {
       class: "btn ghostBtn",
-      onclick: () => commit(() => { S.days[ui.cursor] = { template: null, tasks: [] }; }),
-    }, "Clear the day")));
+      onclick: () => { ui.confirmClear = true; render(); },
+    }, "Clear the day"));
+  }
+  kids.push(el("div", { class: "dayActions" }, actions));
 
   return el("main", null, kids);
 }
@@ -358,6 +398,7 @@ function rollForward(d) {
     const nd = ensureDay(next);
     S.days[next] = { ...nd, tasks: [...nd.tasks, ...left.map((t) => ({
       ...t, id: uid(), actual: 0, spent: 0, status: "pending", rolledFrom: (t.rolledFrom || 0) + 1,
+      fromTemplate: null, tid: null,
     }))] };
     S.days[ui.cursor] = { ...ensureDay(ui.cursor), tasks: d.tasks.filter((t) => !left.includes(t)) };
   });
@@ -370,6 +411,84 @@ const newTask = () => ({
   status: "pending", fromTemplate: null,
 });
 
+/* ---------- drift ---------- */
+
+/* pace figures read better loose than exact: 13 a day, or 1.6 */
+const per = (v) => (v >= 10 ? String(Math.round(v)) : v.toFixed(1));
+
+function makeUpPhrase(p) {
+  const byUnit = {};
+  p.behind.forEach((s) => (byUnit[s.unit] = (byUnit[s.unit] || 0) + s.behindBy));
+  return Object.entries(byUnit).map(([unit, v]) => `${n0(v)} ${unit}`).join(" and ");
+}
+
+const VERDICTS = {
+  clear: ["Cleared", "ok"],
+  ok: ["On pace", "ok"],
+  slipping: ["Slipping", "warn"],
+  off: ["Off track", "warn"],
+};
+
+function driftLede(p, d) {
+  if (d.daysLeft === 0) {
+    return d.toExam < 0 ? "The exam has passed, so this is the closing record."
+      : "Exam day. There are no days left to spread anything over.";
+  }
+  if (p.elapsed === 0) return "The plan starts today, so there is nothing to catch up on yet.";
+  if (!p.behind.length) {
+    return `Level with the plan after ${p.elapsed} ${p.elapsed === 1 ? "day" : "days"}. `
+      + "Nothing has been pushed onto the days ahead.";
+  }
+  const cause = p.missed === 0
+    ? "Logging less than the plan asked for has left"
+    : `${p.missed} ${p.missed === 1 ? "day" : "days"} with nothing logged has left`;
+  return `${cause} ${makeUpPhrase(p)} to make up, spread over the ${d.daysLeft} `
+    + `${d.daysLeft === 1 ? "day" : "days"} before the exam.`;
+}
+
+function outlookCard(d) {
+  const p = d.outlook;
+  const [word, tone] = VERDICTS[p.verdict];
+  const kids = [
+    el("div", { class: "driftHead" },
+      el("span", { class: "driftTag " + tone }, word),
+      el("span", { class: "driftDays" }, p.elapsed === 0 ? "Day one"
+        : `${p.studied} of ${p.elapsed} ${p.elapsed === 1 ? "day" : "days"} studied`)),
+    el("p", { class: "driftLede" }, driftLede(p, d)),
+  ];
+
+  p.live.forEach((s) => kids.push(el("div", { class: "driftRow" },
+    el("span", { class: "dot sm", style: { background: s.color } }),
+    el("span", { class: "driftName" }, s.abbr),
+    el("span", { class: "driftLeft" }, `${n0(s.remaining)} ${s.unit} left`),
+    d.daysLeft === 0 ? el("span", { class: "driftPace" }, "unseen")
+      : el("span", { class: "driftPace" }, per(s.needed) + "/day",
+        s.needed > s.asked * 1.05 ? el("i", null, ` up from ${per(s.asked)}`) : null))));
+
+  if (!p.live.length) {
+    kids.push(el("p", { class: "driftOk" }, "Every bank is at its target. Nothing left to schedule."));
+  } else if (p.atRisk.length) {
+    kids.push(el("p", { class: "driftRisk" }, "At your pace over the last fortnight you would reach exam day with "
+      + p.atRisk.map((s) => `${n0(s.shortfall)} ${s.unit} of ${s.abbr}`).join(", ") + " still unseen."));
+  } else {
+    kids.push(el("p", { class: "driftOk" }, "Your pace over the last fortnight clears every bank before exam day."));
+  }
+
+  const steps = [1, 3, 7];
+  if (p.live.length && d.daysLeft > 1) {
+    kids.push(el("p", { class: "whatIfNote" }, "What each skill costs a day if you sit out more days:"));
+    kids.push(el("table", { class: "tbl whatIf" },
+      el("thead", null, el("tr", null,
+        ["", "now", ...steps.map((n) => "+" + n)].map((h) => el("th", null, h)))),
+      el("tbody", null, p.live.map((s) => el("tr", null,
+        el("td", null, s.abbr),
+        el("td", null, per(s.needed)),
+        steps.map((n) => { const v = s.ifMissed(n); return el("td", null, v == null ? "—" : per(v)); }))))));
+  }
+
+  return el("div", { class: "drift" }, kids);
+}
+
 /* ---------- banks ---------- */
 
 function banksTab(d) {
@@ -377,6 +496,11 @@ function banksTab(d) {
   kids.push(el("div", { class: "statGrid" },
     stat("Current streak", d.streak, d.streak === 1 ? "day" : "days"),
     stat("Days elapsed", Math.max(0, Math.min(d.todayIndex, d.planLength)), "of " + d.planLength)));
+
+  kids.push(el("h2", { class: "h2" }, "Where you stand"));
+  kids.push(el("p", { class: "lede" },
+    "Days you skip don't disappear — the work moves onto the days that are left. This is that arithmetic."));
+  kids.push(outlookCard(d));
 
   kids.push(el("h2", { class: "h2" }, "Bank coverage"));
   kids.push(el("p", { class: "lede" },
@@ -504,7 +628,7 @@ function settingsTab(d) {
   kids.push(el("div", { class: "seg" }, [["light", "Light"], ["dark", "Dim"], ["auto", "Match device"]].map(([k, l]) =>
     el("button", {
       class: "segBtn" + ((S.config.theme || "light") === k ? " on" : ""),
-      onclick: () => commit(() => { S.config.theme = k; setThemeColor(k); }),
+      onclick: () => commit(() => { S.config.theme = k; setThemeColor(); }),
     }, l))));
 
   kids.push(el("h2", { class: "h2" }, "Your data"));
@@ -532,9 +656,21 @@ function settingsTab(d) {
   return el("main", null, kids);
 }
 
-function setThemeColor(theme) {
+/* "Match device" is settled here rather than in CSS, so the dark palette
+   only has to be written once */
+const darkQuery = matchMedia("(prefers-color-scheme: dark)");
+const resolvedTheme = () => {
+  const t = S.config.theme || "light";
+  return t === "auto" ? (darkQuery.matches ? "dark" : "light") : t;
+};
+darkQuery.addEventListener("change", () => {
+  if ((S.config.theme || "light") !== "auto") return;
+  setThemeColor(); render();
+});
+
+function setThemeColor() {
   const m = document.querySelector('meta[name="theme-color"]');
-  if (m) m.content = theme === "dark" ? "#241A20" : "#FDF9FB";
+  if (m) m.content = resolvedTheme() === "dark" ? "#0D1117" : "#FDF9FB";
 }
 
 /* ---------- nav ---------- */
@@ -812,7 +948,7 @@ function openBackup() {
 
 /* ---------- boot ---------- */
 
-setThemeColor(S.config.theme || "light");
+setThemeColor();
 render();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
 if ("serviceWorker" in navigator) {
