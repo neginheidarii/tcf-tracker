@@ -50,13 +50,37 @@ The unit tests cover the arithmetic and the offline queue. The browser tests cov
 
 ## Deploying
 
-The front end is a static bundle, so anything that serves files will do.
+The local database from `npm run db:start` only exists on that machine, so getting this onto a phone means a hosted project. Four steps, in this order.
+
+**1. Create the database.** At supabase.com, **New project**. Choose a region near you and keep the database password it asks for — the CLI wants it in step 2. Then, from this repo:
+
+```bash
+npx supabase login                            # opens a browser
+npx supabase link --project-ref <your-ref>    # the ref is in the project URL
+npx supabase db push                          # applies supabase/migrations
+```
+
+**2. Set two things in the dashboard**, both under **Authentication**. They are easy to miss and each causes a confusing failure later:
+
+- **Sign In / Providers → Email → Confirm email.** Left on, creating an account sends a confirmation email through Supabase's built-in sender, which is rate limited to a couple an hour and meant for testing. For a personal project turn it off, and an account works the moment you create it. Leave it on and you'll want your own SMTP under **Emails → SMTP Settings**.
+- **URL Configuration → Site URL.** Set it to your deployed address. Password reset links are built from this, so while it still says `localhost` a reset email sent to your phone will point at your laptop.
+
+**3. Deploy the front end.** Import the GitHub repo at vercel.com/new — that way every push redeploys. Vercel detects Vite on its own; no build command or output directory to fill in. Before the first deploy, add both environment variables under **Settings → Environment Variables**:
+
+```
+VITE_SUPABASE_URL        Project Settings -> API -> Project URL
+VITE_SUPABASE_ANON_KEY   Project Settings -> API -> publishable key
+```
+
+They're read at build time, so a deploy that ran before you added them needs redeploying. Both belong in the browser bundle; row level security is what protects the data.
+
+**4. Install it on your phone.** See below. Then create your account on the phone and sign in on the laptop, or the other way round — the second device will show the same record.
+
+Deploying from the command line instead of GitHub works too, with the same environment variables set in the dashboard:
 
 ```bash
 npx vercel --prod
 ```
-
-Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in the host's environment variables. The database is wherever your Supabase project lives; `npx supabase db push` sends schema changes to it.
 
 ## Installing on your phone
 
