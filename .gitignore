@@ -1,0 +1,21 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Credentials belong in the environment, never in the repository.
+.env
+.env.*
+!.env.example
+
+# Local Supabase stack
+supabase/.branches/
+supabase/.temp/
+
+.DS_Store
+*.tsbuildinfo
+coverage/
+.vscode/*
+!.vscode/extensions.json
+test-results/
+playwright-report/
